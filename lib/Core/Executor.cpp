@@ -4435,7 +4435,7 @@ void Executor::resolveExact(ExecutionState &state,
     for (ResolutionList::iterator it = rl.begin(), ie = rl.end();
          it != ie; ++it) {
       ref<Expr> inBounds;
-      if (ConstantExpr *CE = dyn_cast<ConstantExpr>(p)) {
+      if (isa<ConstantExpr>(p)) {
         terminateStateOnProgramError(
             *unbound,
             "resolveExact error: unbound and constant invalid pointer "
