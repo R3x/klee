@@ -210,6 +210,22 @@ public:
   /// \return True if human readable mode is switched on
   bool isHumanReadable();
 
+  /// Determine the SMTLIBv2 sort of the expression
+  SMTLIB_SORT getSort(const ref<Expr> &e);
+
+  /// Recursively print expression
+  /// \param e is the expression to print
+  /// \param expectedSort is the sort we want. If "e" is not of the right type a
+  /// cast will be performed.
+  void printExpression(const ref<Expr> &e, SMTLIB_SORT expectedSort);
+
+  /// Scan Expression recursively for Arrays in expressions. Found arrays are
+  /// added to the usedArrays vector.
+  void scan(const ref<Expr> &e);
+
+  // Print SMTLIBv2 assertions for constant arrays
+  void printArrayDeclarations();
+
 protected:
   /// Contains the arrays found during scans
   std::set<const Array *> usedArrays;
@@ -235,9 +251,6 @@ protected:
   /// The query to print
   const Query *query;
 
-  /// Determine the SMTLIBv2 sort of the expression
-  SMTLIB_SORT getSort(const ref<Expr> &e);
-
   /// Print an expression but cast it to a particular SMTLIBv2 sort first.
   void printCastToSort(const ref<Expr> &e, ExprSMTLIBPrinter::SMTLIB_SORT sort);
 
@@ -255,9 +268,6 @@ protected:
 
   // Print SMTLIBv2 logic to use e.g. (set-logic QF_ABV)
   void printSetLogic();
-
-  // Print SMTLIBv2 assertions for constant arrays
-  void printArrayDeclarations();
 
   // Print SMTLIBv2 for the query optimised for human readability
   void printHumanReadableQuery();
@@ -280,18 +290,6 @@ protected:
   /// Print a Constant in the format specified by the current "Constant Display
   /// Mode"
   void printConstant(const ref<ConstantExpr> &e);
-
-  /// Recursively print expression
-  /// \param e is the expression to print
-  /// \param expectedSort is the sort we want. If "e" is not of the right type a
-  /// cast will be performed.
-  /// \param abbrMode the abbreviation mode to use for this expression
-  void printExpression(const ref<Expr> &e, SMTLIB_SORT expectedSort);
-
-  /// Scan Expression recursively for Arrays in expressions. Found arrays are
-  /// added to
-  /// the usedArrays vector.
-  void scan(const ref<Expr> &e);
 
   /// Scan bindings for expression intra-dependencies. The result is written
   /// to the orderedBindings vector that is later used for nested expression

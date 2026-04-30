@@ -11,6 +11,7 @@
 
 #include "klee/Expr/Constraints.h"
 #include "klee/Solver/SolverImpl.h"
+#include "klee/Support/ErrorHandling.h"
 
 #include <utility>
 

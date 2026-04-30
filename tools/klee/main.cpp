@@ -656,6 +656,13 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       ++m_numGeneratedTests;
     }
 
+    {
+      auto f = openTestFile("grill", test_id);
+      std::string test = m_interpreter->getGrillerString(state);
+      if (f)
+        *f << test;
+    }
+
     if (errorMessage || WriteKQueries) {
       std::string constraints;
       m_interpreter->getConstraintLog(state, constraints,Interpreter::KQUERY);

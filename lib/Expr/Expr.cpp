@@ -11,6 +11,7 @@
 
 #include "klee/Config/Version.h"
 #include "klee/Expr/ExprPPrinter.h"
+#include "klee/Expr/ExprSMTLIBPrinter.h"
 #include "klee/Support/OptionCategories.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -324,7 +325,20 @@ ref<Expr> Expr::createIsZero(ref<Expr> e) {
 }
 
 void Expr::print(llvm::raw_ostream &os) const {
-  ExprPPrinter::printSingleExpr(os, const_cast<Expr*>(this));
+  ExprSMTLIBPrinter p;
+  p.setOutput(os);
+  p.printExpression(const_cast<Expr*>(this), p.getSort(const_cast<Expr*>(this)));
+  // ExprPPrinter::printSingleExpr(os, const_cast<Expr*>(this));
+}
+
+std::string Expr::printArrayDeclarations(void) const {
+  ExprSMTLIBPrinter p;
+  std::string str;
+  llvm::raw_string_ostream TmpStr(str);
+  p.setOutput(TmpStr);
+  p.scan(const_cast<Expr*>(this));
+  p.printArrayDeclarations();
+  return TmpStr.str();
 }
 
 void Expr::dump() const {

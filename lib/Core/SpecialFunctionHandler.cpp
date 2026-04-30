@@ -526,7 +526,16 @@ void SpecialFunctionHandler::handlePrintExpr(ExecutionState &state,
          "invalid number of arguments to klee_print_expr");
 
   std::string msg_str = readStringAtAddress(state, arguments[0]);
-  llvm::errs() << msg_str << ":" << arguments[1] << "\n";
+  std::stringstream ss;
+  std::stringstream tmpstr;
+  tmpstr << arguments[1];
+  if (tmpstr.str().length() < 20000) {
+    ss << arguments[1]->printArrayDeclarations();
+    ss << "(arg-value " << msg_str << " () ";
+    ss << tmpstr.str();
+    ss << ")\n";
+    state.griller_string.append(ss.str());
+  }
 }
 
 void SpecialFunctionHandler::handleSetForking(ExecutionState &state,
@@ -608,14 +617,53 @@ void SpecialFunctionHandler::handleGetObjSize(ExecutionState &state,
   assert(arguments.size()==1 &&
          "invalid number of arguments to klee_get_obj_size");
   Executor::ExactResolutionList rl;
-  executor.resolveExact(state, arguments[0], rl, "klee_get_obj_size");
-  for (Executor::ExactResolutionList::iterator it = rl.begin(), 
+  executor.resolveExact(state, arguments[0], rl, "klee_get_obj_size", false);
+  bool sflag = false;
+  for (Executor::ExactResolutionList::iterator it = rl.begin(),
          ie = rl.end(); it != ie; ++it) {
+    sflag = true;
+    unsigned int size = it->first.first->size;
+    if (ConstantExpr *CE = dyn_cast<ConstantExpr>(arguments[0])) {
+      if (CE->getZExtValue() > it->first.first->address) {
+        size = size - (CE->getZExtValue() - it->first.first->address);
+      } else if (CE->getZExtValue() < it->first.first->address) {
+        executor.terminateStateOnUserError(
+            state,
+            "Address resolved to a value less than the current pointer "
+            "(constant) in klee_get_obj_size");
+      }
+    } else {
+      // If the argument is symbolic, get a concrete value from the seed
+      ref<ConstantExpr> cex;
+      if (!executor.getValueFromSeed(state, arguments[0], cex)) {
+        executor.terminateStateOnUserError(
+            state,
+            "Could not get resolvable value for the address in "
+            "klee_get_obj_size");
+      }
+      uint64_t result = cex->getZExtValue();
+      if (result > it->first.first->address) {
+        size = size - (result - it->first.first->address);
+      } else if (result < it->first.first->address) {
+        executor.terminateStateOnUserError(
+            state,
+            "Address resolved to a value less than the current pointer "
+            "(symbolic) in klee_get_obj_size");
+      }
+    }
     executor.bindLocal(
         target, *it->second,
-        ConstantExpr::create(it->first.first->size,
+        ConstantExpr::create(size,
                              executor.kmodule->targetData->getTypeSizeInBits(
                                  target->inst->getType())));
+  }
+
+  if (!sflag) {
+    klee_message("No object found in klee_get_obj_size");
+    executor.bindLocal(
+        target, state,
+        ConstantExpr::create(-1, executor.kmodule->targetData->getTypeSizeInBits(
+                                     target->inst->getType())));
   }
 }
 
