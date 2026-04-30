@@ -255,10 +255,14 @@ private:
   /// beginning of.
   typedef std::vector< std::pair<std::pair<const MemoryObject*, const ObjectState*>, 
                                  ExecutionState*> > ExactResolutionList;
+  bool getValueFromSeed(ExecutionState &state, ref<Expr> expr,
+                        ref<ConstantExpr> &result);
+
   void resolveExact(ExecutionState &state,
                     ref<Expr> p,
                     ExactResolutionList &results,
-                    const std::string &name);
+                    const std::string &name,
+                    bool throwOnError = true);
 
   /// Allocate and bind a new object in a particular state. NOTE: This
   /// function may fork.
@@ -557,6 +561,7 @@ public:
   /*** State accessor methods ***/
 
   unsigned getPathStreamID(const ExecutionState &state) override;
+  std::string getGrillerString(const ExecutionState &state) override;
 
   unsigned getSymbolicPathStreamID(const ExecutionState &state) override;
 

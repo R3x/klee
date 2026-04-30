@@ -16,6 +16,7 @@
 #include "klee/Statistics/TimerStatIncrementer.h"
 #include "klee/Solver/Solver.h"
 #include "klee/Solver/SolverStats.h"
+#include "klee/Support/ErrorHandling.h"
 
 #include "CoreStats.h"
 

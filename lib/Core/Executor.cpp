@@ -976,7 +976,7 @@ void Executor::branch(ExecutionState &state,
   }
 
   for (unsigned i=0; i<N; ++i)
-    if (result[i])
+    if (result[i] && !OnlyReplaySeeds)
       addConstraint(*result[i], conditions[i]);
 }
 
@@ -1363,11 +1363,40 @@ ref<klee::ConstantExpr> Executor::getValueFromSeeds(ExecutionState &state,
   return nullptr;
 }
 
+bool Executor::getValueFromSeed(ExecutionState &state, ref<Expr> expr,
+                                ref<ConstantExpr> &result) {
+  std::map<ExecutionState *, std::vector<SeedInfo>>::iterator it =
+      seedMap.find(&state);
+  bool isSeeding = it != seedMap.end();
+  if (isSeeding && OnlyReplaySeeds) {
+    for (std::vector<SeedInfo>::iterator siit = it->second.begin(),
+                                         siie = it->second.end();
+         siit != siie; ++siit) {
+      ref<Expr> cond = siit->assignment.evaluate(expr);
+      ref<ConstantExpr> value;
+      bool success =
+          solver->getValue(state.constraints, cond, value, state.queryMetaData);
+      assert(success && "FIXME: Unhandled solver failure");
+      (void)success;
+      if (value->getWidth() == expr->getWidth()) {
+        result = value;
+        return true;
+      } else {
+        terminateStateOnUserError(
+            state,
+            "(Grill - getValueFromSeed) Seed value has different width");
+      }
+    }
+  }
+  // This only works when we are replaying seeds
+  return false;
+}
+
 void Executor::executeGetValue(ExecutionState &state,
                                ref<Expr> e,
                                KInstruction *target) {
   e = ConstraintManager::simplifyExpr(state.constraints, e);
-  std::map< ExecutionState*, std::vector<SeedInfo> >::iterator it = 
+  std::map< ExecutionState*, std::vector<SeedInfo> >::iterator it =
     seedMap.find(&state);
   if (it==seedMap.end() || isa<ConstantExpr>(e)) {
     ref<ConstantExpr> value;
@@ -1382,7 +1411,7 @@ void Executor::executeGetValue(ExecutionState &state,
     for (std::vector<SeedInfo>::iterator siit = it->second.begin(), 
            siie = it->second.end(); siit != siie; ++siit) {
       ref<Expr> cond = siit->assignment.evaluate(e);
-      cond = optimizer.optimizeExpr(cond, true);
+      // cond = optimizer.optimizeExpr(cond, true);
       ref<ConstantExpr> value;
       bool success =
           solver->getValue(state.constraints, cond, value, state.queryMetaData);
@@ -1390,9 +1419,9 @@ void Executor::executeGetValue(ExecutionState &state,
       (void) success;
       values.insert(value);
     }
-    
+
     std::vector< ref<Expr> > conditions;
-    for (std::set< ref<Expr> >::iterator vit = values.begin(), 
+    for (std::set< ref<Expr> >::iterator vit = values.begin(),
            vie = values.end(); vit != vie; ++vit)
       conditions.push_back(EqExpr::create(e, *vit));
 
@@ -4364,17 +4393,30 @@ void Executor::executeFree(ExecutionState &state,
 
 void Executor::resolveExact(ExecutionState &state,
                             ref<Expr> p,
-                            ExactResolutionList &results, 
-                            const std::string &name) {
+                            ExactResolutionList &results,
+                            const std::string &name,
+                            bool throwOnError) {
   p = optimizer.optimizeExpr(p, true);
   // XXX we may want to be capping this?
   ResolutionList rl;
   state.addressSpace.resolve(state, solver.get(), p, rl);
-  
+
   ExecutionState *unbound = &state;
-  for (ResolutionList::iterator it = rl.begin(), ie = rl.end(); 
+
+  // This loop finds objects where the pointer matches the base address exactly.
+  for (ResolutionList::iterator it = rl.begin(), ie = rl.end();
        it != ie; ++it) {
-    ref<Expr> inBounds = EqExpr::create(p, it->first->getBaseExpr());
+    ref<Expr> inBounds;
+    if (ConstantExpr *CE = dyn_cast<ConstantExpr>(p)) {
+      if (CE->getZExtValue() != it->first->address) {
+        inBounds = EqExpr::create(it->first->getBaseExpr(),
+                                  it->first->getBaseExpr());
+      } else {
+        inBounds = EqExpr::create(p, it->first->getBaseExpr());
+      }
+    } else {
+      inBounds = EqExpr::create(p, it->first->getBaseExpr());
+    }
 
     StatePair branches =
         fork(*unbound, inBounds, true, BranchType::ResolvePointer);
@@ -4385,6 +4427,41 @@ void Executor::resolveExact(ExecutionState &state,
     unbound = branches.second;
     if (!unbound) // Fork failure
       break;
+  }
+
+  if (unbound) {
+    // Handle the case where the pointer is somewhere in the middle of an object
+    // or the pointer is out of bounds of the object.
+    for (ResolutionList::iterator it = rl.begin(), ie = rl.end();
+         it != ie; ++it) {
+      ref<Expr> inBounds;
+      if (isa<ConstantExpr>(p)) {
+        terminateStateOnProgramError(
+            *unbound,
+            "resolveExact error: unbound and constant invalid pointer "
+            "(Not handled for griller): " + name,
+            StateTerminationType::Ptr, getAddressInfo(*unbound, p));
+        return;
+      } else {
+        // For symbolic pointers: check p >= base && p < base + size
+        inBounds = AndExpr::create(
+            UgeExpr::create(p, it->first->getBaseExpr()),
+            UltExpr::create(p, AddExpr::create(
+                                   it->first->getBaseExpr(),
+                                   ConstantExpr::create(it->first->size,
+                                                        p->getWidth()))));
+      }
+
+      StatePair branches =
+          fork(*unbound, inBounds, true, BranchType::ResolvePointer);
+
+      if (branches.first)
+        results.push_back(std::make_pair(*it, branches.first));
+
+      unbound = branches.second;
+      if (!unbound) // Fork failure
+        break;
+    }
   }
 
   if (unbound) {
@@ -4401,9 +4478,14 @@ void Executor::resolveExact(ExecutionState &state,
         return;
       }
     }
-    terminateStateOnProgramError(
-        *unbound, "memory error: invalid pointer: " + name,
-        StateTerminationType::Ptr, getAddressInfo(*unbound, p));
+    if (throwOnError) {
+      terminateStateOnProgramError(
+          *unbound, "memory error: invalid pointer: " + name,
+          StateTerminationType::Ptr, getAddressInfo(*unbound, p));
+    } else {
+      results.clear();
+      klee_message("Invalid pointer: %s - trying to continue", name.c_str());
+    }
   }
 }
 
@@ -4786,6 +4868,10 @@ void Executor::runFunctionAsMain(Function *f,
 unsigned Executor::getPathStreamID(const ExecutionState &state) {
   assert(pathWriter);
   return state.pathOS.getID();
+}
+
+std::string Executor::getGrillerString(const ExecutionState &state) {
+  return state.griller_string;
 }
 
 unsigned Executor::getSymbolicPathStreamID(const ExecutionState &state) {
